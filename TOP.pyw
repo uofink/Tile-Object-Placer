@@ -5,68 +5,69 @@ from tkinter import filedialog
 import os as os
 import glob
 
-def convertPng(image):
-    image.load()
-    background = Image.new("RGB", image.size, (0, 0, 0))
-    background.paste(image, mask=image.split()[3])
-    return background
-
 def cropImage(image):
     obj = np.asarray(image).nonzero()
     xmin, ymin, xmax, ymax = np.min(obj[1]), np.min(obj[0]), np.max(obj[1]), np.max(obj[0])
-    crop = image.crop((xmin, ymin, xmax, ymax))
+    crop = image.crop((xmin, ymin, xmax+1, ymax))
     return crop
 
-class MainApplication:    
-    def __init__(self, root):
-        self.scale=1.0
+class MainApplication:
+    canvasx=357
+    canvasy=357
+    def __init__(self, root, debug):
+        #initialize class attributes
         self.root=root
+        self.scale=1.0
+        self.topFrame = tk.Frame(root, width=600, height=400)
+        self.btnFrame = tk.Frame(root)
+        self.canvas = tk.Canvas(self.topFrame, width=self.canvasx, height=self.canvasy)
+        self.imageW=self.canvasx
+        self.imageH=self.canvasy
+        self.midx=self.canvasx/2
+        self.midy=self.canvasy/2
+        self.alignLeft=True
+        self.index = 0
+        self.debug=debug
+
+        #register events
         root.bind('<Left>', lambda event, arg=-1:self.move(event, arg))
         root.bind('<Right>', lambda event, arg=1:self.move(event, arg))
         root.bind('<Up>', lambda event, arg=-2:self.move(event, arg))
         root.bind('<Down>', lambda event, arg=2:self.move(event, arg))
+        self.canvas.bind('<B1-Motion>', self.dragMove)
+        
+        #application properties
         root.geometry("600x500")
         root.title("Tile Object Placer (TOP)")
-        self.topFrame = tk.Frame(root, width=600, height=400)
-        self.topFrame.pack(side="top", fill="x")
-
-        self.btnFrame = tk.Frame(root)
+        
+        #application columns for buttons
         self.btnFrame.columnconfigure(0, weight=1)
         self.btnFrame.columnconfigure(1, weight=1)
         self.btnFrame.columnconfigure(2, weight=1)
         self.btnFrame.columnconfigure(3, weight=1)
-
-        self.canvas = tk.Canvas(self.topFrame, width= 357, height= 357)
-        self.canvas.bind('<B1-Motion>', self.dragMove)
-        #self.canvas.bind("<MouseWheel>",self.zoom)
-        #self.canvas.config(scrollregion=self.canvas.bbox(all))
         
-        #frame = Image.open("Frame.png")
+        #creating base grid cavas
         self.grid = Image.open("Grid.png")
-        #self.grid.paste(frame, (153, 241), frame)
         self.background=ImageTk.PhotoImage(self.grid)
         self.photoImage=self.background
         self.canvas.create_image(5,5,anchor="nw",image=self.background)
-        self.canvas.pack()
-
+        
+        #initializing buttons and callbacks
         self.loadBtn = tk.Button(self.btnFrame, text="Load", command=self.getDirectory)
         self.saveBtn = tk.Button(self.btnFrame, text="Save", command=self.saveImage)
         self.nextBtn = tk.Button(self.btnFrame, text="Next image", command=self.nextImage)
         self.prevBtn = tk.Button(self.btnFrame, text="Previous image", command=self.prevImage)
 
+        #draw application
+        self.topFrame.pack(side="top", fill="x")
+        self.canvas.pack()
         self.loadBtn.grid(row=0, column=1, sticky="news")
         self.saveBtn.grid(row=0, column=2, sticky="news")
         self.nextBtn.grid(row=0, column=3, sticky="news")
         self.prevBtn.grid(row=0, column=0, sticky="news")
+        self.btnFrame.pack(side="bottom", fill='x')       
 
-        self.btnFrame.pack(side="bottom", fill='x')
-
-        self.imageW=357
-        self.imageH=357
-
-        self.midx=0
-        self.midy=0
-        
+        #initialize application by asking for directory
         self. getDirectory()
 
     def move(self, event, *arg):
@@ -79,28 +80,35 @@ class MainApplication:
         elif arg[0]==2:#down
             self.midy+=1
 
-        self.canvas.delete(self.photoImage)
-        self.photoImage=ImageTk.PhotoImage(self.image)
-        self.canvas.create_image(self.midx,self.midy,image=self.photoImage)
+        self.updatePosition()
 
     def dragMove(self, event):
-        self.canvas.delete(self.photoImage)
-        self.photoImage=ImageTk.PhotoImage(self.image)
-        self.canvas.create_image(event.x,event.y,image=self.photoImage)
-        
+        #update current image center point coordinates
         self.midx=event.x
         self.midy=event.y
-        
-        imgx = self.image.width/2
-        left = event.x-imgx
-        right = 357-event.x-imgx
+        self.updatePosition()
 
-        self.offsetx=min(left, right)
-        self.offsety = int(357-event.y-self.image.height/2)
-        self.alignLeft = left == self.offsetx
+    def updatePosition(self):
+        #calculate offsets from left and right
+        imgx=self.image.width/2
+        left=self.midx-imgx
+        right=self.canvasx-self.midx-imgx
         
-        self.imageW=int(357-2*self.offsetx)
-        self.imageH = self.image.height+self.offsety
+        #determine if alignement is left or right (closest side)
+        self.offsetx=min(left, right)
+        self.offsety=int(self.canvasy-self.midy-self.image.height/2)
+        self.alignLeft=(left==self.offsetx)
+
+        #update desired image width and height based on new position
+        self.imageW=int(self.canvasx-2*self.offsetx)
+        self.imageH=self.image.height+self.offsety
+
+        if self.debug:
+            print("Image size: ", self.imageW, self.imageH)
+            print("Image mid point: ", self.midx, self.midy)
+            print("Image aligns left: ", self.alignLeft)
+            
+        self.drawImage()
 
     def getDirectory(self):
         self.loadDirectory(filedialog.askdirectory())
@@ -108,100 +116,52 @@ class MainApplication:
     def loadDirectory(self, directory):
         self.index = 0
         self.images = glob.glob(directory+"/*.png")
-        self.drawImage(self.images[self.index])
+        self.redrawImage()
 
     def nextImage(self):
-       maxImg = len(self.images)-1
-       self.index+=1
-       if self.index>maxImg:
-           self.index=maxImg
-       self.drawImage(self.images[self.index])
+        maxImg = len(self.images)-1
+        self.index+=1
+        if self.index>maxImg:
+            self.index=maxImg
+        self.redrawImage()
 
     def prevImage(self):
-       self.index-=1
-       if self.index<0:
-           self.index=0
-       self.drawImage(self.images[self.index])
+        self.index-=1
+        if self.index<0:
+            self.index=0
+        self.redrawImage()
 
-    def drawImage(self, path):
-        self.path = path
-        self.image = cropImage(Image.open(path))
-        self.canvas.delete(self.photoImage)        
+    def drawImage(self):
+        self.canvas.delete(self.photoImage)
         self.photoImage=ImageTk.PhotoImage(self.image)
-        self.canvas.create_image(5,5,anchor="nw",image=self.photoImage)
-        self.midx=int(self.image.width/2+5)
-        self.midy=int(self.image.height/2+5)
+        self.canvas.create_image(self.midx,self.midy,image=self.photoImage)
+
+    def redrawImage(self):
+        self.image=Image.open(self.images[self.index])
+        self.image.load()
+        self.image=cropImage(self.image)
+        self.drawImage()
 
     def saveImage(self):    
-       # print(self.offsetx,self.offsety, self.alignLeft)
-        offx = 0
+        imgW=max(self.imageW,44)
+        imgH=max(self.imageH,88)
+        
+        offx=max(0, int(imgW-self.image.width-self.canvasx-self.midx-imgW/2))
+        offy=max(0, int(imgH-self.image.height-(self.canvasy-self.midy-self.image.height/2)))
+        
         if not self.alignLeft:
-            offx = int((self.imageW+357)/2-self.offsetx-self.image.width)-1
-        bg=Image.new("RGB", (self.imageW, self.imageH), (0, 0, 0))
-        #print(offx)
-        bg.paste(self.image, (offx, 0), self.image)
-        bg.save(self.path.replace("png","bmp"))
-
-##    def zoom(self,event):
-##        if event.num == 4:
-##            self.scale *= 2
-##        elif event.num == 5:
-##            self.scale *= 0.5
-##        if self.scale<1.0:
-##            self.scale=1.0
-##        self.redraw(event.x, event.y)
-##
-##    def redraw(self, x=0, y=0):
-##        self.canvas.delete(self.background)
-##        self.canvas.delete(self.photoImage)
-##
-##        iw, ih = self.grid.size
-##        size = int(iw * self.scale), int(ih * self.scale)
-##        self.grid=self.grid.resize(size)
-##        self.background = ImageTk.PhotoImage(self.grid.resize(size))
-##        self.canvas.create_image(x, y, image=self.background)
-##
-##        iw, ih = self.image.size
-##        size = int(iw * self.scale), int(ih * self.scale)
-##        self.photoImage = ImageTk.PhotoImage(self.image.resize(size))
-##        self.canvas.create_image(x, y, image=self.photoImage)
-##
-##        # tell the canvas to scale up/down the vector objects as well
-##        self.canvas.scale(all, x, y, self.scale, self.scale)
-
-
-    
+            offx = int((imgW+self.canvasx)/2-self.offsetx-self.image.width)
+            
+        if self.debug:
+            print("Image offset: ", offx, offy)
+        bg=Image.new("RGB", (imgW, imgH), (0, 0, 0))
+        bg.paste(self.image, (offx, offy), self.image)
+        bg.save(self.images[self.index].replace("png","bmp"))
+ 
 if __name__ == "__main__":
     root = tk.Tk()
     root.iconbitmap("icon.ico")
-    MainApplication(root)
+    MainApplication(root, False)
     root.mainloop()
-    
-
-##def do_zoom(event):
-##    x = canvas.canvasx(event.x)
-##    y = canvas.canvasy(event.y)
-##    factor = 1.001 ** event.delta
-##    canvas.scale(tk.ALL, x, y, factor, factor)
-##    canvas.pack()
-
-##root = tk.Tk()
-##
-##
-##
-##png = Image.open("Shelves 002.png")
-##
-##convert = convertPng(png)
-##crop = cropImage(png)
-##
-##background = Image.new("RGB", (45,111), (0, 0, 0))
-##
-##xoffset = 0
-##yoffset = 0
-##
-##background.paste(png, (xoffset, yoffset))
-##grid.paste(crop, (153+xoffset, 241+yoffset), crop)
-##
-##grid.save("gridtest.png")
 
 
